@@ -146,7 +146,8 @@ with tabs[0]:
                 df_emp = df[df["Employee"] == emp_to_edit]
 
                 if not df_emp.empty:
-                    date_to_edit = st.selectbox("Select Date", sorted(df_emp["Date"].dt.strftime("%Y-%m-%d").unique()), key="edit_date")
+                    df_emp["Date"] = pd.to_datetime(df_emp["Date"], errors="coerce")
+date_to_edit = st.selectbox("Select Date", sorted(df_emp["Date"].dropna().dt.strftime("%Y-%m-%d").unique()), key="edit_date")
                     match_entries = df_emp[df_emp["Date"].dt.strftime("%Y-%m-%d") == date_to_edit]
 
                     if len(match_entries) > 1:
