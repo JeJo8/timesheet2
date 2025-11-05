@@ -9,7 +9,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 
 # ---------------- CONFIG ----------------
-st.set_page_config(page_title="Timesheet / Rota App v4", layout="wide")
+st.set_page_config(page_title="Timesheet", layout="wide")
 SHOP_NAME = "Esquires Aylesbury Central"
 
 DATA_FILE = "timesheet.csv"
