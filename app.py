@@ -7,11 +7,10 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-import calendar
 
 # ---------------- CONFIG ----------------
-st.set_page_config(page_title="Timesheet / Rota App v3", layout="wide")
-SHOP_NAME = "My Shop"  # Change this to your business name
+st.set_page_config(page_title="Timesheet / Rota App v4", layout="wide")
+SHOP_NAME = "Esquires Aylesbury Central"
 
 DATA_FILE = "timesheet.csv"
 EMP_FILE = "employees.csv"
@@ -26,6 +25,15 @@ if not os.path.exists(EMP_FILE):
 
 df = pd.read_csv(DATA_FILE)
 df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+# ✅ Remove exact duplicates on load
+before = len(df)
+df.drop_duplicates(subset=["Date", "Employee", "StartTime", "FinishTime"], keep="first", inplace=True)
+after = len(df)
+if before != after:
+    df.to_csv(DATA_FILE, index=False)
+    st.sidebar.warning(f"Removed {before - after} duplicate entries automatically.")
+
 employees_df = pd.read_csv(EMP_FILE)
 employees = employees_df["Employee"].dropna().tolist()
 
@@ -53,7 +61,7 @@ week_start = st.sidebar.date_input("Week Start (Monday)", value=(datetime.today(
 auto_break_threshold = st.sidebar.number_input("Auto-break threshold (hours)", min_value=1.0, max_value=24.0, value=6.0)
 auto_break_minutes = st.sidebar.number_input("Auto-break minutes", min_value=0, max_value=240, value=30)
 
-st.title("⏱️ Timesheet / Rota App v3")
+st.title(f"⏱️ {SHOP_NAME} - Timesheet / Rota App v4")
 
 # ---------------- EMPLOYEE MANAGEMENT ----------------
 if is_admin:
@@ -101,19 +109,31 @@ with tabs[0]:
                     total_hours = total_seconds / 3600.0
                     break_minutes = int(auto_break_minutes) if total_hours >= auto_break_threshold else 0
                     worked_hours = max(0, (total_seconds - break_minutes * 60) / 3600.0)
-                    new_row = {
-                        "WeekStart": pd.to_datetime(week_start).strftime("%Y-%m-%d"),
-                        "Date": pd.to_datetime(date).strftime("%Y-%m-%d"),
-                        "Employee": employee,
-                        "StartTime": start_dt.strftime("%H:%M"),
-                        "FinishTime": end_dt.strftime("%H:%M"),
-                        "BreakMinutes": break_minutes,
-                        "HoursWorked": round(worked_hours, 2),
-                        "Notes": notes
-                    }
-                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                    df.to_csv(DATA_FILE, index=False)
-                    st.success(f"Added entry for {employee} ({worked_hours:.2f} hrs)")
+
+                    # ✅ Prevent duplicates
+                    duplicate_check = (
+                        (df["Employee"] == employee) &
+                        (df["Date"] == pd.to_datetime(date)) &
+                        (df["StartTime"] == start_dt.strftime("%H:%M")) &
+                        (df["FinishTime"] == end_dt.strftime("%H:%M"))
+                    )
+                    if duplicate_check.any():
+                        st.warning("⚠️ Duplicate entry detected! Entry not saved.")
+                    else:
+                        new_row = {
+                            "WeekStart": pd.to_datetime(week_start).strftime("%Y-%m-%d"),
+                            "Date": pd.to_datetime(date).strftime("%Y-%m-%d"),
+                            "Employee": employee,
+                            "StartTime": start_dt.strftime("%H:%M"),
+                            "FinishTime": end_dt.strftime("%H:%M"),
+                            "BreakMinutes": break_minutes,
+                            "HoursWorked": round(worked_hours, 2),
+                            "Notes": notes
+                        }
+                        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                        df.to_csv(DATA_FILE, index=False)
+                        st.success(f"Added entry for {employee} ({worked_hours:.2f} hrs)")
+
         st.subheader("All Entries")
         st.dataframe(df.sort_values(["Employee", "Date"]))
 
@@ -201,5 +221,6 @@ with tabs[2]:
     if uploaded:
         uploaded_df = pd.read_csv(uploaded)
         df = pd.concat([df, uploaded_df], ignore_index=True)
+        df.drop_duplicates(subset=["Date", "Employee", "StartTime", "FinishTime"], keep="first", inplace=True)
         df.to_csv(DATA_FILE, index=False)
-        st.success("Uploaded data appended successfully.")
+        st.success("Uploaded data appended successfully (duplicates removed).")
