@@ -9,7 +9,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 
 # ---------------- CONFIG ----------------
-st.set_page_config(page_title="Timesheet", layout="wide")
+st.set_page_config(page_title="Timesheet / Rota App v5", layout="wide")
 SHOP_NAME = "Esquires Aylesbury Central"
 
 DATA_FILE = "timesheet.csv"
@@ -26,7 +26,7 @@ if not os.path.exists(EMP_FILE):
 df = pd.read_csv(DATA_FILE)
 df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
-# ✅ Remove exact duplicates on load
+# ✅ Remove duplicates automatically
 before = len(df)
 df.drop_duplicates(subset=["Date", "Employee", "StartTime", "FinishTime"], keep="first", inplace=True)
 after = len(df)
@@ -37,7 +37,7 @@ if before != after:
 employees_df = pd.read_csv(EMP_FILE)
 employees = employees_df["Employee"].dropna().tolist()
 
-# ---------------- SIDEBAR & LOGIN ----------------
+# ---------------- SIDEBAR LOGIN ----------------
 st.sidebar.header("Access & Settings")
 role = st.sidebar.selectbox("Role", ["Viewer", "Admin"])
 
@@ -61,7 +61,7 @@ week_start = st.sidebar.date_input("Week Start (Monday)", value=(datetime.today(
 auto_break_threshold = st.sidebar.number_input("Auto-break threshold (hours)", min_value=1.0, max_value=24.0, value=6.0)
 auto_break_minutes = st.sidebar.number_input("Auto-break minutes", min_value=0, max_value=240, value=30)
 
-st.title(f"⏱️ {SHOP_NAME} - Timesheet / Rota App v4")
+st.title(f"⏱️ {SHOP_NAME} - Timesheet / Rota App v5")
 
 # ---------------- EMPLOYEE MANAGEMENT ----------------
 if is_admin:
@@ -88,6 +88,8 @@ tabs = st.tabs(["Timesheet", "Summaries", "Export / Import"])
 # ---------------- TIMESHEET TAB ----------------
 with tabs[0]:
     st.header("Timesheet Entries")
+
+    # ADD ENTRY
     if not employees:
         st.warning("No employees found. Please add employees first (Admin only).")
     else:
@@ -110,7 +112,7 @@ with tabs[0]:
                     break_minutes = int(auto_break_minutes) if total_hours >= auto_break_threshold else 0
                     worked_hours = max(0, (total_seconds - break_minutes * 60) / 3600.0)
 
-                    # ✅ Prevent duplicates
+                    # Prevent duplicates
                     duplicate_check = (
                         (df["Employee"] == employee) &
                         (df["Date"] == pd.to_datetime(date)) &
@@ -134,8 +136,95 @@ with tabs[0]:
                         df.to_csv(DATA_FILE, index=False)
                         st.success(f"Added entry for {employee} ({worked_hours:.2f} hrs)")
 
-        st.subheader("All Entries")
-        st.dataframe(df.sort_values(["Employee", "Date"]))
+        # EDIT / DELETE ENTRY
+        if is_admin:
+            st.markdown("### ✏️ Edit or 🗑️ Delete Entry")
+            if df.empty:
+                st.info("No entries available yet.")
+            else:
+                emp_to_edit = st.selectbox("Select Employee", sorted(df["Employee"].dropna().unique()), key="edit_emp")
+                df_emp = df[df["Employee"] == emp_to_edit]
+
+                if not df_emp.empty:
+                    date_to_edit = st.selectbox("Select Date", sorted(df_emp["Date"].dt.strftime("%Y-%m-%d").unique()), key="edit_date")
+                    match_entries = df_emp[df_emp["Date"].dt.strftime("%Y-%m-%d") == date_to_edit]
+
+                    if len(match_entries) > 1:
+                        entry_idx = st.selectbox(
+                            "Multiple entries found — choose which one to edit or delete",
+                            match_entries.index,
+                            format_func=lambda x: f"{match_entries.loc[x, 'StartTime']} - {match_entries.loc[x, 'FinishTime']} ({match_entries.loc[x, 'Notes']})"
+                        )
+                    else:
+                        entry_idx = match_entries.index[0]
+
+                    entry = df.loc[entry_idx]
+                    with st.form("edit_entry_form"):
+                        st.write(f"**Editing entry for {emp_to_edit} on {date_to_edit}**")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            new_start = st.time_input("Start Time", value=datetime.strptime(entry["StartTime"], "%H:%M").time())
+                        with col2:
+                            new_end = st.time_input("Finish Time", value=datetime.strptime(entry["FinishTime"], "%H:%M").time())
+                        new_notes = st.text_area("Notes", value=str(entry.get("Notes", "")))
+                        submitted_edit = st.form_submit_button("💾 Save Changes")
+                        if submitted_edit:
+                            start_dt = datetime.combine(pd.to_datetime(entry["Date"]), new_start)
+                            end_dt = datetime.combine(pd.to_datetime(entry["Date"]), new_end)
+                            if end_dt < start_dt:
+                                end_dt += timedelta(days=1)
+                            total_seconds = (end_dt - start_dt).total_seconds()
+                            total_hours = total_seconds / 3600.0
+                            break_minutes = int(auto_break_minutes) if total_hours >= auto_break_threshold else int(entry.get("BreakMinutes", 0))
+                            worked_hours = max(0, (total_seconds - break_minutes * 60) / 3600.0)
+                            df.at[entry_idx, "StartTime"] = start_dt.strftime("%H:%M")
+                            df.at[entry_idx, "FinishTime"] = end_dt.strftime("%H:%M")
+                            df.at[entry_idx, "BreakMinutes"] = break_minutes
+                            df.at[entry_idx, "HoursWorked"] = round(worked_hours, 2)
+                            df.at[entry_idx, "Notes"] = new_notes
+                            df.to_csv(DATA_FILE, index=False)
+                            st.success(f"✅ Updated entry for {emp_to_edit} on {date_to_edit}")
+
+                    if st.button("❌ Delete This Entry", key="del_entry_btn"):
+                        df.drop(entry_idx, inplace=True)
+                        df.to_csv(DATA_FILE, index=False)
+                        st.warning(f"🗑️ Deleted entry for {emp_to_edit} on {date_to_edit}")
+
+                if st.button("🧹 Clean Duplicate Entries", key="clean_dupes_btn"):
+                    before = len(df)
+                    df.drop_duplicates(subset=["Date", "Employee", "StartTime", "FinishTime"], keep="first", inplace=True)
+                    after = len(df)
+                    df.to_csv(DATA_FILE, index=False)
+                    st.success(f"Removed {before - after} duplicate entries.")
+
+        # SEARCH & VIEW
+        st.subheader("🔍 Search / View Entries")
+        if df.empty:
+            st.info("No entries yet.")
+        else:
+            search_query = st.text_input("Search (by employee, date, or notes):", placeholder="e.g. John or 2025-11-05 or 'delivery'")
+            df_display = df.copy()
+            if search_query.strip():
+                q = search_query.lower()
+                df_display = df_display[
+                    df_display.apply(
+                        lambda row:
+                            q in str(row["Employee"]).lower()
+                            or q in str(row["Date"]).lower()
+                            or q in str(row["Notes"]).lower(),
+                        axis=1
+                    )
+                ]
+                st.info(f"Showing {len(df_display)} matching results for: '{search_query}'")
+
+            if df_display.empty:
+                st.warning("No entries found matching your search.")
+            else:
+                df_display_sorted = df_display.sort_values(["Employee", "Date"])
+                st.dataframe(df_display_sorted)
+                csv_search = df_display_sorted.to_csv(index=False).encode("utf-8")
+                st.download_button("⬇️ Download Search Results", data=csv_search, file_name="search_results.csv")
+            st.caption("Tip: Leave search box empty to view all entries.")
 
 # ---------------- SUMMARIES TAB ----------------
 with tabs[1]:
@@ -147,25 +236,18 @@ with tabs[1]:
         date_to = st.date_input("To", value=pd.to_datetime(week_start) + timedelta(days=27))
 
     df_range = df[(df["Date"] >= pd.to_datetime(date_from)) & (df["Date"] <= pd.to_datetime(date_to))].copy()
-
     if df_range.empty:
         st.info("No entries found in this period.")
     else:
         daily = df_range.groupby(["Date", "Employee"])["HoursWorked"].sum().reset_index()
         weekly = df_range.groupby([pd.Grouper(key="Date", freq="W-MON"), "Employee"])["HoursWorked"].sum().reset_index()
         monthly = df_range.groupby([pd.Grouper(key="Date", freq="M"), "Employee"])["HoursWorked"].sum().reset_index()
-
         st.subheader("📅 Daily Totals")
         st.dataframe(daily.pivot(index="Date", columns="Employee", values="HoursWorked").fillna(0))
-
         st.subheader("🗓 Weekly Totals")
         st.dataframe(weekly.pivot(index="Date", columns="Employee", values="HoursWorked").fillna(0))
-
         st.subheader("📆 Monthly Totals")
         st.dataframe(monthly.pivot(index="Date", columns="Employee", values="HoursWorked").fillna(0))
-
-        # PDF Export
-        st.markdown("### 📄 Export Summary to PDF")
 
         def generate_pdf(data_d, data_w, data_m, shop_name):
             buffer = BytesIO()
@@ -175,7 +257,6 @@ with tabs[1]:
             elements.append(Paragraph(f"<b>{shop_name} — Timesheet Summary</b>", styles["Title"]))
             elements.append(Paragraph(f"Period: {date_from} to {date_to}", styles["Normal"]))
             elements.append(Spacer(1, 12))
-
             def make_table(df, title):
                 elements.append(Paragraph(f"<b>{title}</b>", styles["Heading2"]))
                 tbl_data = [df.columns.to_list()] + df.reset_index().values.tolist()
@@ -187,11 +268,9 @@ with tabs[1]:
                 ]))
                 elements.append(t)
                 elements.append(Spacer(1, 12))
-
             make_table(data_d, "Daily Totals")
             make_table(data_w, "Weekly Totals")
             make_table(data_m, "Monthly Totals")
-
             elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles["Normal"]))
             doc.build(elements)
             pdf = buffer.getvalue()
@@ -204,13 +283,7 @@ with tabs[1]:
             monthly.pivot(index="Date", columns="Employee", values="HoursWorked").fillna(0),
             SHOP_NAME
         )
-
-        st.download_button(
-            "📄 Download Summary as PDF",
-            data=pdf_bytes,
-            file_name=f"timesheet_summary_{date_from}_{date_to}.pdf",
-            mime="application/pdf"
-        )
+        st.download_button("📄 Download Summary as PDF", data=pdf_bytes, file_name=f"timesheet_summary_{date_from}_{date_to}.pdf", mime="application/pdf")
 
 # ---------------- EXPORT / IMPORT TAB ----------------
 with tabs[2]:
