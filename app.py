@@ -136,18 +136,26 @@ with tabs[0]:
                         df.to_csv(DATA_FILE, index=False)
                         st.success(f"Added entry for {employee} ({worked_hours:.2f} hrs)")
 
-        # EDIT / DELETE ENTRY
-        if is_admin:
-            st.markdown("### ✏️ Edit or 🗑️ Delete Entry")
-            if df.empty:
-                st.info("No entries available yet.")
-            else:
-                emp_to_edit = st.selectbox("Select Employee", sorted(df["Employee"].dropna().unique()), key="edit_emp")
-                df_emp = df[df["Employee"] == emp_to_edit]
+       
+                # ---------------- EDIT / DELETE ENTRY (ADMIN ONLY) ----------------
+        st.markdown("### ✏️ Edit or 🗑️ Delete Entry")
 
-                if not df_emp.empty:
-                    df_emp["Date"] = pd.to_datetime(df_emp["Date"], errors="coerce")
-date_to_edit = st.selectbox("Select Date", sorted(df_emp["Date"].dropna().dt.strftime("%Y-%m-%d").unique()), key="edit_date")
+        if df.empty:
+            st.info("No entries available yet.")
+        else:
+            # Ensure 'Date' is in datetime format
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+            emp_to_edit = st.selectbox("Select Employee", sorted(df["Employee"].dropna().unique()), key="edit_emp")
+            df_emp = df[df["Employee"] == emp_to_edit].copy()
+            df_emp["Date"] = pd.to_datetime(df_emp["Date"], errors="coerce")  # ✅ fix .dt error
+
+            if not df_emp.empty:
+                valid_dates = df_emp["Date"].dropna().dt.strftime("%Y-%m-%d").unique()
+                if len(valid_dates) == 0:
+                    st.warning("No valid dates found for this employee.")
+                else:
+                    date_to_edit = st.selectbox("Select Date", sorted(valid_dates), key="edit_date")
                     match_entries = df_emp[df_emp["Date"].dt.strftime("%Y-%m-%d") == date_to_edit]
 
                     if len(match_entries) > 1:
@@ -160,24 +168,29 @@ date_to_edit = st.selectbox("Select Date", sorted(df_emp["Date"].dropna().dt.str
                         entry_idx = match_entries.index[0]
 
                     entry = df.loc[entry_idx]
+
                     with st.form("edit_entry_form"):
                         st.write(f"**Editing entry for {emp_to_edit} on {date_to_edit}**")
+
                         col1, col2 = st.columns(2)
                         with col1:
                             new_start = st.time_input("Start Time", value=datetime.strptime(entry["StartTime"], "%H:%M").time())
                         with col2:
                             new_end = st.time_input("Finish Time", value=datetime.strptime(entry["FinishTime"], "%H:%M").time())
                         new_notes = st.text_area("Notes", value=str(entry.get("Notes", "")))
+
                         submitted_edit = st.form_submit_button("💾 Save Changes")
                         if submitted_edit:
                             start_dt = datetime.combine(pd.to_datetime(entry["Date"]), new_start)
                             end_dt = datetime.combine(pd.to_datetime(entry["Date"]), new_end)
                             if end_dt < start_dt:
                                 end_dt += timedelta(days=1)
+
                             total_seconds = (end_dt - start_dt).total_seconds()
                             total_hours = total_seconds / 3600.0
                             break_minutes = int(auto_break_minutes) if total_hours >= auto_break_threshold else int(entry.get("BreakMinutes", 0))
                             worked_hours = max(0, (total_seconds - break_minutes * 60) / 3600.0)
+
                             df.at[entry_idx, "StartTime"] = start_dt.strftime("%H:%M")
                             df.at[entry_idx, "FinishTime"] = end_dt.strftime("%H:%M")
                             df.at[entry_idx, "BreakMinutes"] = break_minutes
@@ -191,13 +204,15 @@ date_to_edit = st.selectbox("Select Date", sorted(df_emp["Date"].dropna().dt.str
                         df.to_csv(DATA_FILE, index=False)
                         st.warning(f"🗑️ Deleted entry for {emp_to_edit} on {date_to_edit}")
 
-                if st.button("🧹 Clean Duplicate Entries", key="clean_dupes_btn"):
-                    before = len(df)
-                    df.drop_duplicates(subset=["Date", "Employee", "StartTime", "FinishTime"], keep="first", inplace=True)
-                    after = len(df)
-                    df.to_csv(DATA_FILE, index=False)
-                    st.success(f"Removed {before - after} duplicate entries.")
-
+            # Optional cleanup
+            if st.button("🧹 Clean Duplicate Entries", key="clean_dupes_btn"):
+                before = len(df)
+                df.drop_duplicates(subset=["Date", "Employee", "StartTime", "FinishTime"], keep="first", inplace=True)
+                after = len(df)
+                df.to_csv(DATA_FILE, index=False)
+                st.success(f"Removed {before - after} duplicate entries.")
+                    
+                    
         # SEARCH & VIEW
         st.subheader("🔍 Search / View Entries")
         if df.empty:
